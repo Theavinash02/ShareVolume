@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading Entity Data...</title>
+    <!-- Bootstrap CSS for "visually appealing" -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 800px;
+            margin-top: 50px;
+            padding: 30px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #007bff;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        h2 {
+            color: #343a40;
+            margin-top: 30px;
+            border-bottom: 1px solid #dee2e6;
+            padding-bottom: 10px;
+        }
+        h3 {
+            color: #555;
+            margin-top: 20px;
+        }
+        .data-item {
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        .data-item strong {
+            color: #495057;
+        }
+        .value-display {
+            font-weight: bold;
+            color: #28a745; /* Green for max value */
+        }
+        .min-value-display {
+            font-weight: bold;
+            color: #dc3545; /* Red for min value */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="main-title">Loading Entity Data...</h1>
+
+        <div class="data-item">
+            <strong>Entity Name:</strong> <span id="share-entity-name">Loading...</span>
+        </div>
+
+        <h2>Shares Outstanding (Fiscal Years > 2020)</h2>
+
+        <div class="row">
+            <div class="col-md-6">
+                <h3>Maximum Value</h3>
+                <div class="data-item">
+                    <strong>Value:</strong> <span id="share-max-value" class="value-display">Loading...</span>
+                </div>
+                <div class="data-item">
+                    <strong>Fiscal Year:</strong> <span id="share-max-fy">Loading...</span>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <h3>Minimum Value</h3>
+                <div class="data-item">
+                    <strong>Value:</strong> <span id="share-min-value" class="min-value-display">Loading...</span>
+                </div>
+                <div class="data-item">
+                    <strong>Fiscal Year:</strong> <span id="share-min-fy">Loading...</span>
+                </div>
+            </div>
+        </div>
+        <p class="text-muted mt-4 text-center">Data fetched from SEC EDGAR. Filtered for fiscal years > 2020.</p>
+    </div>
+
+    <script>
+        const DEFAULT_CIK = "0000831001";
+        // As per SEC guidance: "Please provide a descriptive User-Agent header in your requests.
+        // Example: SampleCompanyName/1.0 (yourname@example.com)"
+        const USER_AGENT = "CitigroupSharesApp/1.0 (dev@example.com)"; // Placeholder email for User-Agent
+        const AIPipe_PROXY_URL = "https://api.allinone.ai/api/v1/proxy?url=";
+
+        async function fetchAndRender(cik) {
+            // Get references to HTML elements
+            let entityNameElement = document.getElementById('share-entity-name');
+            let mainTitleElement = document.getElementById('main-title');
+            let maxValElement = document.getElementById('share-max-value');
+            let maxFyElement = document.getElementById('share-max-fy');
+            let minValElement = document.getElementById('share-min-value');
+            let minFyElement = document.getElementById('share-min-fy');
+
+            // Set loading states on UI
+            document.title = "Loading Entity Data...";
+            mainTitleElement.textContent = "Loading Entity Data...";
+            entityNameElement.textContent = "Loading...";
+            maxValElement.textContent = "Loading...";
+            maxFyElement.textContent = "Loading...";
+            minValElement.textContent = "Loading...";
+            minFyElement.textContent = "Loading...";
+
+            const secApiBaseUrl = `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik}/dei/EntityCommonStockSharesOutstanding.json`;
+            let fetchUrl = secApiBaseUrl;
+            let fetchOptions = {};
+
+            // Determine if a proxy is needed based on the presence of CIK in URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const paramCik = urlParams.get('CIK');
+
+            if (paramCik && paramCik === cik) { // If the current CIK matches the one from URL parameter
+                fetchUrl = `${AIPipe_PROXY_URL}${encodeURIComponent(secApiBaseUrl)}`;
+            } else { // For the default CIK or if CIK is provided programmatically without being in URL param
+                fetchOptions.headers = { 'User-Agent': USER_AGENT };
+            }
+
+            try {
+                const response = await fetch(fetchUrl, fetchOptions);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
+                }
+                const data = await response.json();
+
+                const entityName = data.entityName || `Unknown Entity (CIK: ${cik})`;
+                const sharesData = data.units?.shares || [];
+
+                // Filter for entries where fiscal year (fy) is greater than "2020" and val is a number
+                const filteredShares = sharesData.filter(entry => {
+                    return entry.fy > "2020" && typeof entry.val === 'number';
+                });
+
+                let maxShare = { val: -Infinity, fy: null };
+                let minShare = { val: Infinity, fy: null };
+
+                if (filteredShares.length > 0) {
+                    filteredShares.forEach(entry => {
+                        if (entry.val > maxShare.val) {
+                            maxShare = { val: entry.val, fy: entry.fy };
+                        }
+                        if (entry.val < minShare.val) {
+                            minShare = { val: entry.val, fy: entry.fy };
+                        }
+                    });
+                } else {
+                    // Case where no valid data is found after filtering
+                    maxShare = { val: 'N/A', fy: 'N/A' };
+                    minShare = { val: 'N/A', fy: 'N/A' };
+                }
+
+                // Update HTML elements with fetched and processed data
+                document.title = `${entityName} Shares Outstanding`;
+                mainTitleElement.textContent = `${entityName} Shares Outstanding`;
+                entityNameElement.textContent = entityName;
+
+                // Format numbers for better readability
+                maxValElement.textContent = maxShare.val !== 'N/A' ? maxShare.val.toLocaleString() : 'N/A';
+                maxFyElement.textContent = maxShare.fy;
+
+                minValElement.textContent = minShare.val !== 'N/A' ? minShare.val.toLocaleString() : 'N/A';
+                minFyElement.textContent = minShare.fy;
+
+            } catch (error) {
+                console.error(`Failed to fetch and render data for CIK ${cik}:`, error);
+                document.title = "Error Loading Data";
+                mainTitleElement.textContent = `Error Loading Data for CIK ${cik}`;
+                entityNameElement.textContent = "Error";
+                maxValElement.textContent = "Error";
+                maxFyElement.textContent = "Error";
+                minValElement.textContent = "Error";
+                minFyElement.textContent = "Error";
+                alert(`Failed to load data for CIK ${cik}.\nPlease check console for details.\nError: ${error.message}`);
+            }
+        }
+
+        // Initial call to fetch and render data when the DOM is fully loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const cikFromUrl = urlParams.get('CIK');
+
+            let currentCik = DEFAULT_CIK;
+            // Validate if the CIK from URL is a 10-digit number
+            if (cikFromUrl && /^\d{10}$/.test(cikFromUrl)) {
+                currentCik = cikFromUrl;
+            }
+            
+            fetchAndRender(currentCik);
+        });
+    </script>
+</body>
+</html>
